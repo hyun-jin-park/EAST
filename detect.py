@@ -1,3 +1,4 @@
+#-*- coding:utf-8 -*-
 import torch
 from torchvision import transforms
 from PIL import Image, ImageDraw
