@@ -195,6 +195,9 @@ def is_cross_text(start_loc, length, vertices):
     for vertex in vertices:
         p2 = Polygon(vertex.reshape((4, 2))).convex_hull
         inter = p1.intersection(p2).area
+        if p2.area == 0 :
+            return True
+
         if 0.01 <= inter / p2.area <= 0.99:
             return True
     return False

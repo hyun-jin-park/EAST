@@ -15,6 +15,10 @@ from loss import Loss
 from evaluation import evaluate_batch
 
 
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
+
 def train(config):
     tb_writer = SummaryWriter(config.out)
 
@@ -38,6 +42,8 @@ def train(config):
     # config.epoch//4, config.epoch//2], gamma=0.1)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True, min_lr=1e-5)
 
+    best_hmean = 0.0
+
     for epoch in range(config.epoch):
         model.train()
         epoch_loss = 0
@@ -48,12 +54,12 @@ def train(config):
             pred_score, pred_geo = model(img)
             total_loss, classify_loss, angle_loss, iou_loss, geo_loss = criterion(gt_score, pred_score, gt_geo,
                                                                                   pred_geo, ignored_map)
-            if i % 20 == 1:
-                tb_writer.add_scalar('train/loss', total_loss, epoch * len(train_dataset) + i)
-                tb_writer.add_scalar('train/classify_loss', classify_loss, epoch * len(train_dataset) + i)
-                tb_writer.add_scalar('train/angle_loss', angle_loss, epoch * len(train_dataset) + i)
-                tb_writer.add_scalar('train/iou_loss', iou_loss, epoch * len(train_dataset) + i)
-                tb_writer.add_scalar('train/geo_loss', geo_loss, epoch * len(train_dataset) + i)
+            
+            tb_writer.add_scalar('train/loss', total_loss, epoch * len(train_dataset) + i)
+            tb_writer.add_scalar('train/classify_loss', classify_loss, epoch * len(train_dataset) + i)
+            tb_writer.add_scalar('train/angle_loss', angle_loss, epoch * len(train_dataset) + i)
+            tb_writer.add_scalar('train/iou_loss', iou_loss, epoch * len(train_dataset) + i)
+            tb_writer.add_scalar('train/geo_loss', geo_loss, epoch * len(train_dataset) + i)
 
             epoch_loss += total_loss.item()
             optimizer.zero_grad()
@@ -61,21 +67,22 @@ def train(config):
             optimizer.step()
 
         epoch_loss = epoch_loss / int(file_num / config.train_batch_size)
-        print('epoch_loss is {:.8f}, epoch_time is {:.8f}'.format(epoch_loss, time.time() - epoch_time))
+        print('\n {} epoch_loss is {:.8f}, epoch_time is {:.8f}'.format(epoch, epoch_loss, time.time() - epoch_time))
         print(time.asctime(time.localtime(time.time())))
         print('=' * 50)
         scheduler.step(epoch_loss)
+        tb_writer.add_scalar('lr', get_lr(optimizer), (epoch + 1) * len(train_dataset))
 
-        if (epoch + 1) % config.save_interval == 0:
+        _, eval_result = evaluate_batch(model, config)
+        print(eval_result)
+        tb_writer.add_scalar('train/hmean', eval_result['hmean'], (epoch + 1) * len(train_dataset))
+        tb_writer.add_scalar('train/precision', eval_result['precision'], (epoch + 1) * len(train_dataset))
+        tb_writer.add_scalar('train/recall', eval_result['recall'], (epoch + 1) * len(train_dataset))
+
+        if eval_result['hmean'] > best_hmean:
+            best_hmean = eval_result['hmean']
             state_dict = model.module.state_dict() if data_parallel else model.state_dict()
             torch.save(state_dict, os.path.join(config.out, 'model_epoch_{}.pth'.format(epoch + 1)))
-
-        if config.eval_interval > 0 and (epoch + 1) % config.eval_interval == 0:
-            _, eval_result = evaluate_batch(model, config)
-            print(eval_result)
-            tb_writer.add_scalar('train/hmean', eval_result['hmean'], (epoch + 1) * len(train_dataset))
-            tb_writer.add_scalar('train/precision', eval_result['precision'], (epoch + 1) * len(train_dataset))
-            tb_writer.add_scalar('train/recall', eval_result['recall'], (epoch + 1) * len(train_dataset))
 
 
 if __name__ == '__main__':
@@ -83,8 +90,8 @@ if __name__ == '__main__':
     parser.add_argument('--train_data_path', type=str, default='../merged/train')
     parser.add_argument('--eval_data_path', type=str, default='../ICDAR_2015/test')
     parser.add_argument('--out', type=str, default='pths')
-    parser.add_argument('--train_batch_size', type=int, default=32)
-    parser.add_argument('--eval_batch_size', type=int, default=64)
+    parser.add_argument('--train_batch_size', type=int, default=16)
+    parser.add_argument('--eval_batch_size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--num_workers', type=int, default=16)
     parser.add_argument('--epoch', type=int, default=600)
